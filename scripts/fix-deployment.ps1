@@ -1,4 +1,5 @@
 param(
+    [string]$BucketName = "feedback-stack-bucket",
     [string]$StackName = "feedback-stack",
     [string]$Region = "us-east-1"
 )
@@ -27,9 +28,7 @@ Copy-Item -Path "$projectRoot\src\*" -Destination $tempDir -Recurse
 
 # Install dependencies
 Push-Location $tempDir
-# Install dependencies but exclude boto3 and botocore
-pip install -r requirements.txt -t . --no-deps
-pip install pyjwt -t .
+pip install -r requirements.txt -t .
 Pop-Location
 
 # Create zip package
@@ -40,23 +39,32 @@ if (Test-Path $zipPath) {
 }
 Compress-Archive -Path "$tempDir\*" -DestinationPath $zipPath -Force
 
-# Get CloudFormation stack outputs
-Write-Host "Getting CloudFormation stack outputs..."
-$outputs = aws cloudformation describe-stacks --stack-name $StackName --query "Stacks[0].Outputs" | ConvertFrom-Json
-
-# Extract bucket name from outputs
-$bucketName = ($outputs | Where-Object { $_.OutputKey -eq "S3BucketName" }).OutputValue
-
-if (-not $bucketName) {
-    Write-Host "Error: Could not find S3 bucket name in CloudFormation outputs."
-    exit 1
+# Check if S3 bucket exists, create if it doesn't
+Write-Host "Checking if S3 bucket exists..."
+$bucketExists = aws s3api head-bucket --bucket $BucketName 2>$null
+if (-not $?) {
+    Write-Host "Creating S3 bucket: $BucketName"
+    aws s3 mb "s3://$BucketName" --region $Region
+    # Wait a moment for bucket creation to propagate
+    Start-Sleep -Seconds 5
 }
-
-Write-Host "Using S3 bucket: $bucketName"
 
 # Upload Lambda package to S3
 Write-Host "Uploading Lambda package to S3..."
-aws s3 cp $zipPath "s3://$bucketName/lambda/feedback-lambda.zip"
+aws s3 cp $zipPath "s3://$BucketName/lambda/feedback-lambda.zip"
+
+# Update CloudFormation stack with S3BucketName output
+Write-Host "Updating CloudFormation stack with S3BucketName output..."
+aws cloudformation update-stack `
+    --stack-name $StackName `
+    --template-body file://$projectRoot\cloudformation\template.yaml `
+    --capabilities CAPABILITY_IAM `
+    --parameters ParameterKey=S3BucketName,ParameterValue=$BucketName `
+    --no-fail-on-empty-changeset
+
+# Wait for stack update to complete
+Write-Host "Waiting for stack update to complete..."
+aws cloudformation wait stack-update-complete --stack-name $StackName
 
 # Update Lambda functions
 Write-Host "Updating Lambda functions with latest code..."
@@ -64,7 +72,7 @@ $functions = @("feedback-lambda", "feedback-writer-lambda", "feedback-reader-lam
 
 foreach ($function in $functions) {
     Write-Host "Updating function: $function"
-    aws lambda update-function-code --function-name $function --s3-bucket $bucketName --s3-key lambda/feedback-lambda.zip
+    aws lambda update-function-code --function-name $function --s3-bucket $BucketName --s3-key lambda/feedback-lambda.zip
 }
 
 Write-Host "Lambda functions updated successfully!"

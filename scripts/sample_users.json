@@ -1,0 +1,32 @@
+[
+  {
+    "email": "user1@example.com",
+    "name": "Regular User 1",
+    "password": "Password123!",
+    "is_reviewer": false
+  },
+  {
+    "email": "user2@example.com",
+    "name": "Regular User 2",
+    "password": "Password123!",
+    "is_reviewer": false
+  },
+  {
+    "email": "user3@example.com",
+    "name": "Regular User 3",
+    "password": "Password123!",
+    "is_reviewer": false
+  },
+  {
+    "email": "reviewer1@example.com",
+    "name": "Reviewer 1",
+    "password": "Password123!",
+    "is_reviewer": true
+  },
+  {
+    "email": "reviewer2@example.com",
+    "name": "Reviewer 2",
+    "password": "Password123!",
+    "is_reviewer": true
+  }
+]
