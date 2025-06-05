@@ -1,0 +1,347 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation template for Feedback Stack with Bedrock, API Gateway, and DynamoDB'
+
+Parameters:
+  ModelId:
+    Type: String
+    Default: anthropic.claude-3-sonnet-20240229-v1:0
+    Description: Bedrock model ID to use for conversations
+  
+  S3BucketName:
+    Type: String
+    Description: S3 bucket name for Lambda code
+    Default: feedback-stack-bucket
+
+Resources:
+  # DynamoDB Table for Feedback
+  FeedbackTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: user-feedback
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: conversation_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: ConversationIndex
+          KeySchema:
+            - AttributeName: conversation_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+  # IAM Role for Lambda
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: BedrockAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                  - bedrock-runtime:InvokeModel
+                  - bedrock-runtime:InvokeModelWithResponseStream
+                  - bedrock-runtime:Converse
+                Resource: '*'
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource: !GetAtt FeedbackTable.Arn
+
+  # Lambda Function for Bedrock Conversation
+  FeedbackLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: feedback-lambda
+      Handler: app.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.11
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          MODEL_ID: !Ref ModelId
+      Code:
+        S3Bucket: !Ref S3BucketName
+        S3Key: lambda/feedback-lambda.zip
+
+  # Lambda Function for Writing Feedback
+  FeedbackWriterLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: feedback-writer-lambda
+      Handler: feedback_writer.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.11
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          FEEDBACK_TABLE_NAME: !Ref FeedbackTable
+      Code:
+        S3Bucket: !Ref S3BucketName
+        S3Key: lambda/feedback-lambda.zip
+
+  # Lambda Function for Reading Feedback
+  FeedbackReaderLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: feedback-reader-lambda
+      Handler: feedback_reader.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.11
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          FEEDBACK_TABLE_NAME: !Ref FeedbackTable
+      Code:
+        S3Bucket: !Ref S3BucketName
+        S3Key: lambda/feedback-lambda.zip
+
+  # API Gateway REST API
+  FeedbackApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: FeedbackApi
+      Description: API for Feedback with Bedrock
+
+  # API Gateway Resource for Conversation
+  ConversationResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref FeedbackApi
+      ParentId: !GetAtt FeedbackApi.RootResourceId
+      PathPart: conversation
+      
+  # OPTIONS method for CORS - Conversation
+  ConversationOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref FeedbackApi
+      ResourceId: !Ref ConversationResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,POST'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        PassthroughBehavior: WHEN_NO_MATCH
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # API Gateway Method for Conversation
+  ConversationMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref FeedbackApi
+      ResourceId: !Ref ConversationResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FeedbackLambda.Arn}/invocations
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # API Gateway Resource for Writing Feedback
+  FeedbackWriteResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref FeedbackApi
+      ParentId: !GetAtt FeedbackApi.RootResourceId
+      PathPart: submit-feedback
+      
+  # OPTIONS method for CORS - Submit Feedback
+  FeedbackWriteOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref FeedbackApi
+      ResourceId: !Ref FeedbackWriteResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,POST'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        PassthroughBehavior: WHEN_NO_MATCH
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # API Gateway Method for Writing Feedback
+  FeedbackWriteMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref FeedbackApi
+      ResourceId: !Ref FeedbackWriteResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FeedbackWriterLambda.Arn}/invocations
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # API Gateway Resource for Reading Feedback
+  FeedbackReadResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref FeedbackApi
+      ParentId: !GetAtt FeedbackApi.RootResourceId
+      PathPart: feedback-data
+      
+  # OPTIONS method for CORS - Feedback Data
+  FeedbackReadOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref FeedbackApi
+      ResourceId: !Ref FeedbackReadResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,GET'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        PassthroughBehavior: WHEN_NO_MATCH
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # API Gateway Method for Reading Feedback
+  FeedbackReadMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref FeedbackApi
+      ResourceId: !Ref FeedbackReadResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FeedbackReaderLambda.Arn}/invocations
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # API Gateway Deployment
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: 
+      - ConversationMethod
+      - ConversationOptionsMethod
+      - FeedbackWriteMethod
+      - FeedbackWriteOptionsMethod
+      - FeedbackReadMethod
+      - FeedbackReadOptionsMethod
+    Properties:
+      RestApiId: !Ref FeedbackApi
+      StageName: prod
+
+  # Lambda Permission for API Gateway - Conversation
+  ConversationLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref FeedbackLambda
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${FeedbackApi}/*/POST/conversation
+
+  # Lambda Permission for API Gateway - Write Feedback
+  WriteFeedbackLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref FeedbackWriterLambda
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${FeedbackApi}/*/POST/submit-feedback
+
+  # Lambda Permission for API Gateway - Read Feedback
+  ReadFeedbackLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref FeedbackReaderLambda
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${FeedbackApi}/*/GET/feedback-data
+
+Outputs:
+  ConversationApiEndpoint:
+    Description: API Gateway endpoint URL for conversation
+    Value: !Sub https://${FeedbackApi}.execute-api.${AWS::Region}.amazonaws.com/prod/conversation
+  
+  WriteFeedbackApiEndpoint:
+    Description: API Gateway endpoint URL for writing feedback
+    Value: !Sub https://${FeedbackApi}.execute-api.${AWS::Region}.amazonaws.com/prod/submit-feedback
+  
+  ReadFeedbackApiEndpoint:
+    Description: API Gateway endpoint URL for reading feedback
+    Value: !Sub https://${FeedbackApi}.execute-api.${AWS::Region}.amazonaws.com/prod/feedback-data
+  
+  FeedbackTableName:
+    Description: DynamoDB table name for feedback
+    Value: !Ref FeedbackTable
