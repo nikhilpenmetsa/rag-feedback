@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'CloudFormation template for Feedback Stack with Bedrock, API Gateway, and DynamoDB'
+Description: 'CloudFormation template for Feedback Stack with Bedrock, API Gateway, Cognito, and DynamoDB'
 
 Parameters:
   ModelId:
@@ -11,8 +11,63 @@ Parameters:
     Type: String
     Description: S3 bucket name for Lambda code
     Default: feedback-stack-bucket
+    
+  UserPoolName:
+    Type: String
+    Description: Name for the Cognito User Pool
+    Default: feedback-user-pool
 
 Resources:
+  # Cognito User Pool
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Ref UserPoolName
+      AutoVerifiedAttributes:
+        - email
+      UsernameAttributes:
+        - email
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+          RequireUppercase: true
+      Schema:
+        - Name: email
+          AttributeDataType: String
+          Mutable: true
+          Required: true
+        - Name: name
+          AttributeDataType: String
+          Mutable: true
+          Required: true
+        - Name: is_reviewer
+          AttributeDataType: String
+          Mutable: true
+          Required: false
+  
+  # Cognito User Pool Client
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: feedback-app-client
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+        - ALLOW_USER_SRP_AUTH
+      PreventUserExistenceErrors: ENABLED
+      
+  # Cognito User Pool Domain
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Sub "feedback-app-${AWS::AccountId}"
+      UserPoolId: !Ref UserPool
+
   # DynamoDB Table for Feedback
   FeedbackTable:
     Type: AWS::DynamoDB::Table
@@ -24,6 +79,8 @@ Resources:
           AttributeType: S
         - AttributeName: conversation_id
           AttributeType: S
+        - AttributeName: user_id
+          AttributeType: S
       KeySchema:
         - AttributeName: id
           KeyType: HASH
@@ -31,6 +88,12 @@ Resources:
         - IndexName: ConversationIndex
           KeySchema:
             - AttributeName: conversation_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: UserIndex
+          KeySchema:
+            - AttributeName: user_id
               KeyType: HASH
           Projection:
             ProjectionType: ALL
@@ -71,7 +134,16 @@ Resources:
                   - dynamodb:GetItem
                   - dynamodb:Query
                   - dynamodb:Scan
+                  - dynamodb:UpdateItem
                 Resource: !GetAtt FeedbackTable.Arn
+        - PolicyName: CognitoAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cognito-idp:AdminGetUser
+                Resource: !GetAtt UserPool.Arn
 
   # Lambda Function for Bedrock Conversation
   FeedbackLambda:
@@ -103,6 +175,7 @@ Resources:
       Environment:
         Variables:
           FEEDBACK_TABLE_NAME: !Ref FeedbackTable
+          USER_POOL_ID: !Ref UserPool
       Code:
         S3Bucket: !Ref S3BucketName
         S3Key: lambda/feedback-lambda.zip
@@ -120,6 +193,25 @@ Resources:
       Environment:
         Variables:
           FEEDBACK_TABLE_NAME: !Ref FeedbackTable
+          USER_POOL_ID: !Ref UserPool
+      Code:
+        S3Bucket: !Ref S3BucketName
+        S3Key: lambda/feedback-lambda.zip
+
+  # Lambda Function for Reviewing Feedback
+  FeedbackReviewerLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: feedback-reviewer-lambda
+      Handler: feedback_reviewer.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.11
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          FEEDBACK_TABLE_NAME: !Ref FeedbackTable
+          USER_POOL_ID: !Ref UserPool
       Code:
         S3Bucket: !Ref S3BucketName
         S3Key: lambda/feedback-lambda.zip
@@ -130,6 +222,17 @@ Resources:
     Properties:
       Name: FeedbackApi
       Description: API for Feedback with Bedrock
+
+  # Cognito Authorizer
+  CognitoAuthorizer:
+    Type: AWS::ApiGateway::Authorizer
+    Properties:
+      Name: CognitoAuthorizer
+      RestApiId: !Ref FeedbackApi
+      Type: COGNITO_USER_POOLS
+      IdentitySource: method.request.header.Authorization
+      ProviderARNs:
+        - !GetAtt UserPool.Arn
 
   # API Gateway Resource for Conversation
   ConversationResource:
@@ -172,7 +275,8 @@ Resources:
       RestApiId: !Ref FeedbackApi
       ResourceId: !Ref ConversationResource
       HttpMethod: POST
-      AuthorizationType: NONE
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref CognitoAuthorizer
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
@@ -227,7 +331,8 @@ Resources:
       RestApiId: !Ref FeedbackApi
       ResourceId: !Ref FeedbackWriteResource
       HttpMethod: POST
-      AuthorizationType: NONE
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref CognitoAuthorizer
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
@@ -278,11 +383,64 @@ Resources:
       RestApiId: !Ref FeedbackApi
       ResourceId: !Ref FeedbackReadResource
       HttpMethod: GET
-      AuthorizationType: NONE
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref CognitoAuthorizer
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
         Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FeedbackReaderLambda.Arn}/invocations
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # API Gateway Resource for Reviewing Feedback
+  FeedbackReviewResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref FeedbackApi
+      ParentId: !GetAtt FeedbackApi.RootResourceId
+      PathPart: review-feedback
+      
+  # OPTIONS method for CORS - Review Feedback
+  FeedbackReviewOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref FeedbackApi
+      ResourceId: !Ref FeedbackReviewResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,POST'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        PassthroughBehavior: WHEN_NO_MATCH
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # API Gateway Method for Reviewing Feedback
+  FeedbackReviewMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref FeedbackApi
+      ResourceId: !Ref FeedbackReviewResource
+      HttpMethod: POST
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref CognitoAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FeedbackReviewerLambda.Arn}/invocations
       MethodResponses:
         - StatusCode: '200'
           ResponseParameters:
@@ -298,6 +456,8 @@ Resources:
       - FeedbackWriteOptionsMethod
       - FeedbackReadMethod
       - FeedbackReadOptionsMethod
+      - FeedbackReviewMethod
+      - FeedbackReviewOptionsMethod
     Properties:
       RestApiId: !Ref FeedbackApi
       StageName: prod
@@ -329,6 +489,15 @@ Resources:
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${FeedbackApi}/*/GET/feedback-data
 
+  # Lambda Permission for API Gateway - Review Feedback
+  ReviewFeedbackLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref FeedbackReviewerLambda
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${FeedbackApi}/*/POST/review-feedback
+
 Outputs:
   ConversationApiEndpoint:
     Description: API Gateway endpoint URL for conversation
@@ -341,7 +510,27 @@ Outputs:
   ReadFeedbackApiEndpoint:
     Description: API Gateway endpoint URL for reading feedback
     Value: !Sub https://${FeedbackApi}.execute-api.${AWS::Region}.amazonaws.com/prod/feedback-data
+    
+  ReviewFeedbackApiEndpoint:
+    Description: API Gateway endpoint URL for reviewing feedback
+    Value: !Sub https://${FeedbackApi}.execute-api.${AWS::Region}.amazonaws.com/prod/review-feedback
   
   FeedbackTableName:
     Description: DynamoDB table name for feedback
     Value: !Ref FeedbackTable
+    
+  UserPoolId:
+    Description: Cognito User Pool ID
+    Value: !Ref UserPool
+    
+  UserPoolClientId:
+    Description: Cognito User Pool Client ID
+    Value: !Ref UserPoolClient
+    
+  UserPoolDomain:
+    Description: Cognito User Pool Domain
+    Value: !Sub https://${UserPoolDomain}.auth.${AWS::Region}.amazoncognito.com
+    
+  S3BucketName:
+    Description: S3 bucket name for Lambda code
+    Value: !Ref S3BucketName

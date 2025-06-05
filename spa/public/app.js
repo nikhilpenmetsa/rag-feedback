@@ -1,11 +1,9 @@
-// Configuration
-const API_ENDPOINT = 'https://sz84wiarb4.execute-api.us-east-1.amazonaws.com/prod/conversation';
-const FEEDBACK_API_ENDPOINT = 'https://sz84wiarb4.execute-api.us-east-1.amazonaws.com/prod/submit-feedback';
-
 // DOM Elements
 const chatMessages = document.getElementById('chat-messages');
 const userInput = document.getElementById('user-input');
 const sendButton = document.getElementById('send-button');
+const feedbackButton = document.getElementById('feedback-button');
+const logoutButton = document.getElementById('logout-button');
 
 // State
 let conversationId = null;
@@ -19,6 +17,14 @@ userInput.addEventListener('keydown', (e) => {
         e.preventDefault();
         sendMessage();
     }
+});
+
+feedbackButton.addEventListener('click', () => {
+    window.location.href = 'feedback.html';
+});
+
+logoutButton.addEventListener('click', () => {
+    window.auth.logout();
 });
 
 // Functions
@@ -39,11 +45,18 @@ async function sendMessage() {
     const loadingElement = addLoadingIndicator();
 
     try {
-        // Send message to API
-        const response = await fetch(API_ENDPOINT, {
+        // Get the authentication token
+        const token = window.auth.getCurrentUserToken();
+        if (!token) {
+            throw new Error('Not authenticated');
+        }
+
+        // Send message to API with token
+        const response = await fetch(window.CONFIG.API_ENDPOINTS.CONVERSATION, {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
             },
             body: JSON.stringify({ message })
         });
@@ -69,8 +82,13 @@ async function sendMessage() {
         // Remove loading indicator
         loadingElement.remove();
         
-        // Add error message
-        addMessage('Sorry, there was an error processing your request. Please try again.', 'system');
+        if (error.message === 'Not authenticated') {
+            // Redirect to login page
+            window.location.href = 'login.html';
+        } else {
+            // Add error message
+            addMessage('Sorry, there was an error processing your request. Please try again.', 'system');
+        }
     }
 }
 
@@ -181,10 +199,17 @@ function showFeedbackForm(container, feedbackType, msgConversationId) {
 
 async function submitFeedback(feedbackType, feedbackText, msgConversationId) {
     try {
-        const response = await fetch(FEEDBACK_API_ENDPOINT, {
+        // Get the authentication token
+        const token = window.auth.getCurrentUserToken();
+        if (!token) {
+            throw new Error('Not authenticated');
+        }
+
+        const response = await fetch(window.CONFIG.API_ENDPOINTS.SUBMIT_FEEDBACK, {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
             },
             body: JSON.stringify({
                 conversation_id: msgConversationId,
@@ -202,6 +227,11 @@ async function submitFeedback(feedbackType, feedbackText, msgConversationId) {
         console.log('Feedback submitted successfully');
     } catch (error) {
         console.error('Error submitting feedback:', error);
+        
+        if (error.message === 'Not authenticated') {
+            // Redirect to login page
+            window.location.href = 'login.html';
+        }
     }
 }
 
@@ -223,9 +253,20 @@ function addLoadingIndicator() {
 
 // Initialize the app
 function init() {
+    // Check authentication
+    if (!window.auth) {
+        console.error('Auth module not loaded');
+        return;
+    }
+
     // Focus on input
     userInput.focus();
+    
+    // Hide feedback button for non-reviewers
+    if (!window.auth.isUserReviewer()) {
+        feedbackButton.style.display = 'none';
+    }
 }
 
 // Start the app
-init();
+document.addEventListener('DOMContentLoaded', init);

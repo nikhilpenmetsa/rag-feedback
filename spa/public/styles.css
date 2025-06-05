@@ -30,11 +30,41 @@ body {
     color: white;
     border-top-left-radius: 10px;
     border-top-right-radius: 10px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
 }
 
 .chat-header h1 {
     font-size: 1.5rem;
     font-weight: 500;
+}
+
+.user-controls {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.user-name {
+    font-size: 0.9rem;
+    color: #FF9900;
+    font-weight: 500;
+    margin-right: 10px;
+}
+
+.header-button {
+    padding: 6px 12px;
+    background-color: transparent;
+    color: white;
+    border: 1px solid white;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.header-button:hover {
+    background-color: rgba(255, 255, 255, 0.1);
 }
 
 .chat-messages {

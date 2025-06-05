@@ -1,10 +1,9 @@
 import json
 import os
 import boto3
-import uuid
 import logging
 import jwt
-from datetime import datetime
+from boto3.dynamodb.conditions import Key
 
 # Configure logging
 logger = logging.getLogger()
@@ -12,6 +11,7 @@ logger.setLevel(logging.INFO)
 
 # Initialize DynamoDB client
 dynamodb = boto3.resource('dynamodb')
+cognito = boto3.client('cognito-idp')
 
 def extract_user_from_token(event):
     """Extract user information from JWT token"""
@@ -50,23 +50,19 @@ def lambda_handler(event, context):
         # Extract user information from JWT token
         user_info = extract_user_from_token(event)
         user_id = user_info.get('user_id', 'anonymous') if user_info else 'anonymous'
+        is_reviewer = user_info.get('is_reviewer', False) if user_info else False
         
         # Get request body from API Gateway event
         body = json.loads(event.get('body', '{}'))
         logger.info(f"Request body: {json.dumps(body)}")
         
-        # Extract feedback data
-        conversation_id = body.get('conversation_id', str(uuid.uuid4()))
-        feedback_type = body.get('feedback_type', 'neutral')  # positive, negative, neutral
-        feedback_text = body.get('feedback_text', '')
-        original_query = body.get('original_query', '')
-        llm_response = body.get('llm_response', '')
+        # Extract review data
+        feedback_id = body.get('feedback_id')
+        reviewer_comments = body.get('reviewer_comments', '')
         
-        logger.info(f"Processing feedback for conversation: {conversation_id}, type: {feedback_type}")
-        
-        # Validate feedback_type
-        if feedback_type not in ['positive', 'negative', 'neutral']:
-            logger.warning(f"Invalid feedback type: {feedback_type}")
+        # Validate required fields
+        if not feedback_id:
+            logger.warning("Missing required field: feedback_id")
             return {
                 'statusCode': 400,
                 'headers': {
@@ -75,7 +71,7 @@ def lambda_handler(event, context):
                     'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token',
                     'Access-Control-Allow-Methods': 'OPTIONS,POST'
                 },
-                'body': json.dumps({'error': 'Invalid feedback_type. Must be positive, negative, or neutral'})
+                'body': json.dumps({'error': 'Missing required field: feedback_id'})
             }
         
         # Get table name from environment variable
@@ -83,28 +79,33 @@ def lambda_handler(event, context):
         table = dynamodb.Table(table_name)
         logger.info(f"Using DynamoDB table: {table_name}")
         
-        # Create timestamp
-        timestamp = datetime.utcnow().isoformat()
+        # Check if user has reviewer permissions
+        if not is_reviewer:
+            logger.warning(f"User {user_id} does not have reviewer permissions")
+            return {
+                'statusCode': 403,
+                'headers': {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token',
+                    'Access-Control-Allow-Methods': 'OPTIONS,POST'
+                },
+                'body': json.dumps({'error': 'User does not have reviewer permissions'})
+            }
         
-        # Create item to store in DynamoDB
-        item = {
-            'id': str(uuid.uuid4()),
-            'conversation_id': conversation_id,
-            'feedback_type': feedback_type,
-            'feedback_text': feedback_text,
-            'original_query': original_query,
-            'llm_response': llm_response,
-            'timestamp': timestamp,
-            'user_id': user_id,
-            'reviewed': False,
-            'reviewer_comments': '',
-            'reviewer_id': ''
-        }
+        # Update the feedback item with review information
+        response = table.update_item(
+            Key={'id': feedback_id},
+            UpdateExpression="set reviewed = :r, reviewer_comments = :c, reviewer_id = :i",
+            ExpressionAttributeValues={
+                ':r': True,
+                ':c': reviewer_comments,
+                ':i': user_id
+            },
+            ReturnValues="UPDATED_NEW"
+        )
         
-        # Store in DynamoDB
-        logger.info(f"Storing feedback with ID: {item['id']}")
-        table.put_item(Item=item)
-        logger.info("Feedback stored successfully")
+        logger.info(f"Updated feedback item: {json.dumps(response.get('Attributes', {}))}")
         
         # Return successful response
         return {
@@ -116,13 +117,13 @@ def lambda_handler(event, context):
                 'Access-Control-Allow-Methods': 'OPTIONS,POST'
             },
             'body': json.dumps({
-                'message': 'Feedback stored successfully',
-                'feedback_id': item['id']
+                'message': 'Feedback reviewed successfully',
+                'feedback_id': feedback_id
             })
         }
         
     except Exception as e:
-        logger.error(f"Error storing feedback: {str(e)}", exc_info=True)
+        logger.error(f"Error reviewing feedback: {str(e)}", exc_info=True)
         return {
             'statusCode': 500,
             'headers': {
@@ -131,5 +132,5 @@ def lambda_handler(event, context):
                 'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token',
                 'Access-Control-Allow-Methods': 'OPTIONS,POST'
             },
-            'body': json.dumps({'error': f"Error storing feedback: {str(e)}"})
+            'body': json.dumps({'error': f"Error reviewing feedback: {str(e)}"})
         }
