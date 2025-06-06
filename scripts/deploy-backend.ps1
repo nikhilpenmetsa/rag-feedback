@@ -1,6 +1,6 @@
 param(
     [string]$BucketName = "feedback-stack-bucket",
-    [string]$StackName = "feedback-stack",
+    [string]$StackName = "ai-chat-backend-stack",
     [string]$Region = "us-east-1"
 )
 
@@ -24,7 +24,7 @@ if (Test-Path $tempDir) {
 New-Item -ItemType Directory -Path $tempDir | Out-Null
 
 # Copy source files
-Copy-Item -Path "$projectRoot\src\*" -Destination $tempDir -Recurse
+Copy-Item -Path "$projectRoot\backend\src\*" -Destination $tempDir -Recurse
 
 # Install dependencies
 Push-Location $tempDir
@@ -79,7 +79,7 @@ if ($stackExists) {
 # Deploy CloudFormation stack
 Write-Host "Deploying CloudFormation stack..."
 aws cloudformation deploy `
-    --template-file "$projectRoot\cloudformation\template.yaml" `
+    --template-file "$projectRoot\backend\cloudformation\template.yaml" `
     --stack-name $StackName `
     --capabilities CAPABILITY_IAM `
     --parameter-overrides S3BucketName=$BucketName `

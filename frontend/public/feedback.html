@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Feedback Dashboard - AI Chat Interface</title>
+    <link rel="stylesheet" href="styles.css">
+    <style>
+        .feedback-dashboard {
+            width: 95%;
+            max-width: 1200px;
+            height: 90vh;
+            background-color: white;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .dashboard-header {
+            padding: 15px;
+            background-color: #232F3E;
+            color: white;
+            border-top-left-radius: 10px;
+            border-top-right-radius: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .dashboard-header h1 {
+            font-size: 1.5rem;
+            font-weight: 500;
+        }
+        
+        .dashboard-content {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+        }
+        
+        .feedback-filters {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        
+        .filter-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .filter-group select {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        
+        .feedback-items {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        
+        .feedback-item {
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 15px;
+            background-color: #f9f9f9;
+        }
+        
+        .feedback-item-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            font-size: 0.9rem;
+            color: #666;
+        }
+        
+        .feedback-type {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-weight: bold;
+            font-size: 0.8rem;
+        }
+        
+        .feedback-type.positive {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        
+        .feedback-type.negative {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        
+        .feedback-type.neutral {
+            background-color: #e2e3e5;
+            color: #383d41;
+        }
+        
+        .conversation {
+            margin: 15px 0;
+            border-left: 3px solid #ddd;
+            padding-left: 15px;
+        }
+        
+        .query, .response {
+            margin-bottom: 10px;
+        }
+        
+        .query strong, .response strong {
+            display: block;
+            margin-bottom: 5px;
+            color: #333;
+        }
+        
+        .feedback-text {
+            margin-top: 15px;
+            padding: 10px;
+            background-color: #f0f0f0;
+            border-radius: 5px;
+            font-style: italic;
+        }
+        
+        .review-section {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px dashed #ddd;
+        }
+        
+        .review-form {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        
+        .review-form textarea {
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            resize: vertical;
+            min-height: 80px;
+        }
+        
+        .review-form button {
+            align-self: flex-end;
+            padding: 8px 15px;
+            background-color: #FF9900;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        
+        .review-form button:hover {
+            background-color: #e68a00;
+        }
+        
+        .reviewer-comments {
+            margin-top: 15px;
+            padding: 10px;
+            background-color: #e6f7ff;
+            border-radius: 5px;
+            border-left: 3px solid #1890ff;
+        }
+        
+        .reviewer-info {
+            font-size: 0.8rem;
+            color: #666;
+            margin-top: 5px;
+        }
+        
+        .back-button {
+            padding: 8px 15px;
+            background-color: transparent;
+            color: white;
+            border: 1px solid white;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        
+        .back-button:hover {
+            background-color: rgba(255, 255, 255, 0.1);
+        }
+        
+        .no-feedback {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <div class="feedback-dashboard">
+        <div class="dashboard-header">
+            <div class="header-left">
+                <h1>Feedback Dashboard</h1>
+                <span id="user-name" class="user-name"></span>
+            </div>
+            <button id="back-button" class="back-button">Back to Chat</button>
+        </div>
+        <div class="dashboard-content">
+            <div class="feedback-filters">
+                <div class="filter-group">
+                    <label for="type-filter">Feedback Type:</label>
+                    <select id="type-filter">
+                        <option value="all">All</option>
+                        <option value="positive">Positive</option>
+                        <option value="negative">Negative</option>
+                        <option value="neutral">Neutral</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label for="review-filter">Review Status:</label>
+                    <select id="review-filter">
+                        <option value="all">All</option>
+                        <option value="reviewed">Reviewed</option>
+                        <option value="unreviewed">Unreviewed</option>
+                    </select>
+                </div>
+            </div>
+            <div class="feedback-items" id="feedback-items">
+                <div class="no-feedback">Loading feedback data...</div>
+            </div>
+        </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/amazon-cognito-identity-js@6.3.1/dist/amazon-cognito-identity.min.js"></script>
+    <script src="config.js"></script>
+    <script src="auth.js"></script>
+    <script src="feedback.js"></script>
+</body>
+</html>

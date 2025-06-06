@@ -1,5 +1,5 @@
 param(
-    [string]$StackName = "feedback-stack",
+    [string]$StackName = "ai-chat-backend-stack",
     [string]$Region = "us-east-1"
 )
 
@@ -23,13 +23,11 @@ if (Test-Path $tempDir) {
 New-Item -ItemType Directory -Path $tempDir | Out-Null
 
 # Copy source files
-Copy-Item -Path "$projectRoot\src\*" -Destination $tempDir -Recurse
+Copy-Item -Path "$projectRoot\backend\src\*" -Destination $tempDir -Recurse
 
 # Install dependencies
 Push-Location $tempDir
-# Install dependencies but exclude boto3 and botocore
-pip install -r requirements.txt -t . --no-deps
-pip install pyjwt -t .
+pip install -r requirements.txt -t .
 Pop-Location
 
 # Create zip package

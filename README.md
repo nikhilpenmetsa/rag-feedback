@@ -64,54 +64,72 @@ The system includes user authentication via Amazon Cognito, with different permi
 
 ```
 rag-feedback/
-├── cloudformation/       # CloudFormation templates
-│   └── template.yaml     # Main backend stack template
-├── scripts/              # Deployment and utility scripts
-│   ├── deploy.ps1        # Main deployment script
-│   ├── update-lambda.ps1 # Script to update Lambda code
-│   ├── create_users.py   # Python script to create Cognito users
-│   ├── create_users.sh   # Bash script to run create_users.py
-│   ├── create_users.ps1  # PowerShell script to run create_users.py
-│   └── sample_users.json # Sample user data for create_users.py
-├── src/                  # Lambda function source code
-│   ├── app.py            # Conversation Lambda
-│   ├── feedback_writer.py # Feedback submission Lambda
-│   ├── feedback_reader.py # Feedback retrieval Lambda
-│   ├── feedback_reviewer.py # Feedback reviewer Lambda
-│   └── requirements.txt  # Python dependencies
-└── spa/                  # Single Page Application
-    ├── cloudformation/   # SPA infrastructure
-    │   └── spa-template.yaml # CloudFront/S3 template
-    ├── public/           # SPA static files
-    │   ├── index.html    # Main HTML file
-    │   ├── login.html    # Login page
-    │   ├── feedback.html # Feedback dashboard
-    │   ├── styles.css    # CSS styling
-    │   ├── app.js        # Main application JavaScript
-    │   ├── auth.js       # Authentication JavaScript
-    │   ├── feedback.js   # Feedback dashboard JavaScript
-    │   └── config.js     # Configuration file
-    └── scripts/          # SPA deployment scripts
-        ├── deploy.ps1    # SPA deployment script
-        ├── update_config.py # Script to update config.js
-        ├── update_config.ps1 # PowerShell wrapper for update_config.py
-        └── update_config.sh  # Bash wrapper for update_config.py
+├── backend/                # Backend components
+│   ├── cloudformation/     # CloudFormation templates
+│   │   └── template.yaml   # Main backend stack template
+│   └── src/                # Lambda function source code
+│       ├── app.py          # Conversation Lambda
+│       ├── feedback_writer.py # Feedback submission Lambda
+│       ├── feedback_reader.py # Feedback retrieval Lambda
+│       ├── feedback_reviewer.py # Feedback reviewer Lambda
+│       └── requirements.txt # Python dependencies
+├── frontend/               # Frontend components
+│   ├── cloudformation/     # Frontend infrastructure
+│   │   └── spa-template.yaml # CloudFront/S3 template
+│   └── public/             # SPA static files
+│       ├── index.html      # Router page
+│       ├── login.html      # Login page
+│       ├── chat.html       # Main chat interface
+│       ├── feedback.html   # Feedback dashboard
+│       ├── styles.css      # CSS styling
+│       ├── app.js          # Main application JavaScript
+│       ├── auth.js         # Authentication JavaScript
+│       ├── feedback.js     # Feedback dashboard JavaScript
+│       └── config.js       # Configuration file
+├── scripts/                # Deployment and utility scripts
+│   ├── deploy.ps1          # Backend deployment script
+│   ├── update-lambda.ps1   # Script to update Lambda code
+│   ├── deploy-frontend.ps1 # Frontend deployment script
+│   ├── update-frontend-config.ps1 # Update frontend config with backend endpoints
+│   ├── update_frontend_config.py  # Python script for updating frontend config
+│   ├── update-frontend-config.sh  # Bash script for updating frontend config
+│   ├── create_users.py     # Python script to create Cognito users
+│   ├── create_users.sh     # Bash script to run create_users.py
+│   ├── create_users.ps1    # PowerShell script to run create_users.py
+│   └── sample_users.json   # Sample user data for create_users.py
+└── images/                 # Screenshots and UI images
 ```
 
 ## Deployment
 
 ### Backend Deployment
 
+For Windows:
 ```powershell
 cd scripts
-.\deploy.ps1
+.\deploy-backend.ps1
 ```
+
+For Linux/macOS:
+```bash
+cd scripts
+./deploy-backend.sh
+```
+
+This will deploy the backend stack named `ai-chat-backend-stack`.
 
 To update Lambda functions without redeploying the entire stack:
 
+For Windows:
 ```powershell
 cd scripts
 .\update-lambda.ps1
+```
+
+For Linux/macOS:
+```bash
+cd scripts
+./update-lambda.sh
 ```
 
 ### Creating Users
@@ -130,22 +148,86 @@ cd scripts
 ./create_users.sh
 ```
 
+The first time you run this script, it will create a `sample_users.json` file from the template. You'll need to edit this file to set real passwords before running the script again.
+
 This will create sample users with different permission levels:
 - Regular users: user1@example.com, user2@example.com, user3@example.com
 - Reviewer users: reviewer1@example.com, reviewer2@example.com
 
+Note: The `sample_users.json` file is excluded from Git to prevent credentials from being stored in the repository.
+
 ### Frontend Deployment
 
+For Windows:
 ```powershell
-cd spa/scripts
-.\deploy.ps1
+cd scripts
+.\deploy-frontend.ps1
 ```
+
+For Linux/macOS:
+```bash
+cd scripts
+./deploy-frontend.sh
+```
+
+This will deploy the frontend stack named `feedback-frontend-stack`.
 
 After deploying the frontend, update the configuration with the backend endpoints:
 
+For Windows:
 ```powershell
-cd spa/scripts
-.\update_config.ps1
+cd scripts
+.\update-frontend-config.ps1
+```
+
+For Linux/macOS:
+```bash
+cd scripts
+./update-frontend-config.sh
+```
+
+## Cleanup
+
+### Cleanup Backend Resources
+
+```powershell
+cd scripts
+.\cleanup-backend.ps1
+```
+
+For Linux/macOS:
+
+```bash
+cd scripts
+./cleanup-backend.sh
+```
+
+### Cleanup Frontend Resources
+
+```powershell
+cd scripts
+.\cleanup-frontend.ps1
+```
+
+For Linux/macOS:
+
+```bash
+cd scripts
+./cleanup-frontend.sh
+```
+
+### Cleanup All Resources
+
+```powershell
+cd scripts
+.\cleanup-all.ps1
+```
+
+For Linux/macOS:
+
+```bash
+cd scripts
+./cleanup-all.sh
 ```
 
 ## API Endpoints
@@ -192,8 +274,8 @@ POST /review-feedback
 
 ## Authentication Flow
 
-1. Users log in through the login.html page using Cognito authentication
-2. Upon successful login, a JWT token is stored in the browser's localStorage
+1. Users visit the application and are redirected to the login page
+2. After successful login through Cognito authentication, a JWT token is stored in the browser's localStorage
 3. The token is sent with each API request in the Authorization header
 4. API Gateway validates the token using Cognito authorizers
 5. Lambda functions extract user information from the token
