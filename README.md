@@ -13,6 +13,8 @@ The system includes user authentication via Amazon Cognito, with different permi
 
 ## Architecture
 
+![Architecture Diagram](images/Feedback_Architecture.drawio.png)
+
 ### Backend Components
 
 - **AWS Lambda Functions**:
@@ -316,3 +318,14 @@ POST /review-feedback
 - **Performance Metrics**: Track AI system performance through quantifiable feedback data
 - **Quality Control**: Implement a review process for AI-generated content
 - **User Management**: Control access to feedback data with different permission levels
+
+## Screenshots
+
+### Login Page
+![Login Page](images/user-login.png)
+
+### User providing feedback
+![Feedback Collection](images/user-feedback.png)
+
+### Power user reviewing feedback provided by users
+![Feedback Review](images/reviewer-assessment.png)
